@@ -1,0 +1,54 @@
+sudo pacman -S playerctl
+
+mkdir -p ~/.local/bin
+nvim ~/.local/bin/waybar-now-playing
+
+//script
+#!/usr/bin/env bash
+
+status=$(playerctl status 2>/dev/null)
+
+if [[ "$status" != "Playing" ]]; then
+    exit 0
+fi
+
+artist=$(playerctl metadata --format '{{xesam:artist}}')
+title=$(playerctl metadata --format '{{xesam:title}}')
+album=$(playerctl metadata --format '{{xesam:album}}')
+
+tooltip="<b>${title}</b>\n${artist}\n${album}"
+
+printf '{"text":" %s","tooltip":"%s"}\n' "$artist" "$tooltip"
+
+
+
+
+//execute the script
+
+chmod +x ~/.local/bin/waybar-now-playing
+
+// add module 
+
+
+nvim ~/.config/waybar/config.jsonc
+
+"custom/now-playing": {
+    "exec": "~/.local/bin/waybar-now-playing",
+    "interval": 2,
+    "format": "{text}",
+    "return-type": "json",
+    "tooltip": true
+},
+
+
+// add on the bar -> custom/now-playing
+
+"modules-right": [
+    "custom/now-playing",
+    "pulseaudio",
+    "network",
+    "battery"
+]
+
+
+then kill the waybar and restart it 
