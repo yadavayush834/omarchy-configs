@@ -1,0 +1,11 @@
+cp ~/waybar-themes/config/test/config.jsonc ~/.config/waybar/
+
+cp ~/waybar-themes/config/test/style.css ~/.config/waybar/
+
+
+
+pkill waybar
+
+waybar &
+
+/home/ayush/.config/omarchy/themes/gruvu
