@@ -1,0 +1,5 @@
+nano ~/.config/hypr/input.conf
+
+kb_options = compose:caps
+//change too
+kb_options =
