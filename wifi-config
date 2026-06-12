@@ -1,0 +1,16 @@
+sudo pacman -S usbutils
+// for downloading lsusb
+
+sudo pacman -S networkmanager wireless_tools wpa_supplicant
+
+
+sudo systemctl enable NetworkManager
+sudo systemctl start NetworkManager
+
+
+
+sudo pacman -S usb_modeswitch
+
+// for switchign to tethering mode from cd rom 
+
+nmtui
