@@ -9,3 +9,8 @@ pkill waybar
 waybar &
 
 /home/ayush/.config/omarchy/themes/gruvu
+
+
+/// use https://github.com/atif-1402/minimal-waybar-themes for fast changes 
+
+/home/ayush/.config/waybar.backup.1781723780 -> here it creates backup files 
