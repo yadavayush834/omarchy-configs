@@ -16,13 +16,14 @@
 #   "interval": 1,
 #   "onClick": "~/.config/omarchy/bar/scripts/pomodoro click",
 #   "onMiddleClick": "~/.config/omarchy/bar/scripts/pomodoro stop",
-#   "onRightClick": "~/.config/omarchy/bar/scripts/pomodoro reset",
+#   "onRightClick": "~/.config/omarchy/bar/scripts/pomodoro right-click",
 #   "type": "command"
 # }
 #
 # Controls:
 #   Left click   Add a task or pause/resume the current task
 #   Right click  Reset the current task to its original duration
+#   Double-right Reset and clear the current task
 #   Middle click Stop and clear the current task
 
 set -u
@@ -78,6 +79,7 @@ end_at=0
 running=0
 completed=0
 sessions=0
+last_right_click_ms=0
 
 is_uint() {
   [[ "$1" =~ ^[0-9]+$ ]]
@@ -109,6 +111,9 @@ load_state() {
       sessions)
         is_uint "${value}" && sessions="${value}"
         ;;
+      last_right_click_ms)
+        is_uint "${value}" && last_right_click_ms="${value}"
+        ;;
     esac
   done < "${state_file}"
 }
@@ -124,6 +129,7 @@ save_state() {
     printf 'running=%s\n' "${running}"
     printf 'completed=%s\n' "${completed}"
     printf 'sessions=%s\n' "${sessions}"
+    printf 'last_right_click_ms=%s\n' "${last_right_click_ms}"
   } > "${temporary}"
   mv "${temporary}" "${state_file}"
 }
@@ -171,25 +177,25 @@ print_status() {
     state_word="running"
     class_name="active"
     text="${icon} $(format_time) · ${short_task}"
-    printf -v tooltip '%s · %s remaining · %s\nLeft: pause · Right: reset · Middle: stop' \
+    printf -v tooltip '%s · %s remaining · %s\nLeft: pause · Right: reset · Double-right/Middle: clear' \
       "${task}" "$(format_time)" "${state_word}"
   elif (( completed == 1 )); then
     state_word="complete"
     class_name="active"
     text="${icon} 00:00 · ${short_task}"
-    printf -v tooltip '%s · complete · %s task(s) finished\nLeft: new task · Right: reset · Middle: stop' \
+    printf -v tooltip '%s · complete · %s task(s) finished\nLeft: new task · Right: reset · Double-right/Middle: clear' \
       "${task}" "${sessions}"
   elif (( remaining < duration )); then
     state_word="paused"
     class_name="paused"
     text="${icon} $(format_time) · ${short_task}"
-    printf -v tooltip '%s · %s remaining · %s\nLeft: resume · Right: reset · Middle: stop' \
+    printf -v tooltip '%s · %s remaining · %s\nLeft: resume · Right: reset · Double-right/Middle: clear' \
       "${task}" "$(format_time)" "${state_word}"
   else
     state_word="ready"
     class_name="idle"
     text="${icon} $(format_time) · ${short_task}"
-    printf -v tooltip '%s · %s · %s\nLeft: start · Right: reset · Middle: stop' \
+    printf -v tooltip '%s · %s · %s\nLeft: start · Right: reset · Double-right/Middle: clear' \
       "${task}" "$(format_time)" "${state_word}"
   fi
 
@@ -236,6 +242,7 @@ stop_timer() {
   running=0
   end_at=0
   completed=0
+  last_right_click_ms=0
   save_state
 }
 
@@ -254,8 +261,24 @@ start_timer() {
   remaining="${duration}"
   running=1
   completed=0
+  last_right_click_ms=0
   end_at=$(($(date +%s) + duration))
   save_state
+}
+
+handle_right_click() {
+  local now_ms elapsed_ms
+  [[ -n "${task}" ]] || return 0
+
+  now_ms="$(date +%s%3N)"
+  elapsed_ms=$((now_ms - last_right_click_ms))
+
+  if (( last_right_click_ms > 0 && elapsed_ms >= 0 && elapsed_ms <= 700 )); then
+    stop_timer
+  else
+    last_right_click_ms="${now_ms}"
+    reset_timer
+  fi
 }
 
 open_setup() {
@@ -293,11 +316,14 @@ case "${action}" in
   reset)
     reset_timer
     ;;
+  right-click)
+    handle_right_click
+    ;;
   stop)
     stop_timer
     ;;
   *)
-    printf 'Usage: %s {status|click|setup|toggle|start|reset|stop}\n' "${0##*/}" >&2
+    printf 'Usage: %s {status|click|setup|toggle|start|reset|right-click|stop}\n' "${0##*/}" >&2
     exit 2
     ;;
 esac
