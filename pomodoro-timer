@@ -14,33 +14,69 @@
 #   "horizontalMargin": 8.5,
 #   "id": "pomodoro",
 #   "interval": 1,
-#   "onClick": "~/.config/omarchy/bar/scripts/pomodoro toggle",
-#   "onMiddleClick": "~/.config/omarchy/bar/scripts/pomodoro skip",
+#   "onClick": "~/.config/omarchy/bar/scripts/pomodoro click",
+#   "onMiddleClick": "~/.config/omarchy/bar/scripts/pomodoro stop",
 #   "onRightClick": "~/.config/omarchy/bar/scripts/pomodoro reset",
 #   "type": "command"
 # }
 #
 # Controls:
-#   Left click   Start or pause
-#   Right click  Reset the current phase
-#   Middle click Switch between focus and break
+#   Left click   Add a task or pause/resume the current task
+#   Right click  Reset the current task to its original duration
+#   Middle click Stop and clear the current task
 
 set -u
 
-focus_seconds=1500
-break_seconds=300
+default_seconds=1500
 state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/omarchy-pomodoro"
 state_file="${state_dir}/state"
 lock_file="${state_dir}/lock"
+
+action="${1:-status}"
+
+setup_timer() {
+  local script_path entered_task entered_minutes
+  script_path="$(readlink -f "$0")"
+
+  entered_task="$(gum input \
+    --header="What are you working on?" \
+    --placeholder="e.g. Revise chapter 4" \
+    --prompt="Task: ")" || return 0
+
+  [[ -n "${entered_task//[[:space:]]/}" ]] || return 0
+
+  while true; do
+    entered_minutes="$(gum input \
+      --header="How long do you want to focus?" \
+      --value="25" \
+      --prompt="Minutes: ")" || return 0
+
+    if [[ "${entered_minutes}" =~ ^[1-9][0-9]*$ ]] && (( entered_minutes <= 1440 )); then
+      break
+    fi
+
+    gum style --foreground 1 "Enter a whole number from 1 to 1440."
+  done
+
+  "${script_path}" start "${entered_task}" "${entered_minutes}"
+  gum style --foreground 2 "Started: ${entered_task} (${entered_minutes} minutes)"
+}
+
+if [[ "${action}" == "setup" ]]; then
+  setup_timer
+  exit 0
+fi
 
 mkdir -p "${state_dir}"
 exec 9>"${lock_file}"
 flock 9
 
-phase="focus"
-remaining="${focus_seconds}"
+task=""
+duration="${default_seconds}"
+remaining="${default_seconds}"
 end_at=0
 running=0
+completed=0
 sessions=0
 
 is_uint() {
@@ -52,8 +88,11 @@ load_state() {
 
   while IFS='=' read -r key value; do
     case "${key}" in
-      phase)
-        [[ "${value}" == "focus" || "${value}" == "break" ]] && phase="${value}"
+      task)
+        task="${value}"
+        ;;
+      duration)
+        is_uint "${value}" && (( value > 0 )) && duration="${value}"
         ;;
       remaining)
         is_uint "${value}" && remaining="${value}"
@@ -63,6 +102,9 @@ load_state() {
         ;;
       running)
         [[ "${value}" == "0" || "${value}" == "1" ]] && running="${value}"
+        ;;
+      completed)
+        [[ "${value}" == "0" || "${value}" == "1" ]] && completed="${value}"
         ;;
       sessions)
         is_uint "${value}" && sessions="${value}"
@@ -75,21 +117,15 @@ save_state() {
   local temporary
   temporary="$(mktemp "${state_dir}/state.XXXXXX")"
   {
-    printf 'phase=%s\n' "${phase}"
+    printf 'task=%s\n' "${task}"
+    printf 'duration=%s\n' "${duration}"
     printf 'remaining=%s\n' "${remaining}"
     printf 'end_at=%s\n' "${end_at}"
     printf 'running=%s\n' "${running}"
+    printf 'completed=%s\n' "${completed}"
     printf 'sessions=%s\n' "${sessions}"
   } > "${temporary}"
   mv "${temporary}" "${state_file}"
-}
-
-duration_for_phase() {
-  if [[ "${phase}" == "focus" ]]; then
-    printf '%s' "${focus_seconds}"
-  else
-    printf '%s' "${break_seconds}"
-  fi
 }
 
 refresh_expired_timer() {
@@ -99,21 +135,14 @@ refresh_expired_timer() {
   if (( running == 1 )); then
     remaining=$((end_at - now))
     if (( remaining <= 0 )); then
-      if [[ "${phase}" == "focus" ]]; then
-        sessions=$((sessions + 1))
-        phase="break"
-        remaining="${break_seconds}"
-        notify-send --app-name="Pomodoro" --icon="appointment-soon" \
-          "Focus complete" "Great work — your 5-minute break is ready." >/dev/null 2>&1 || true
-      else
-        phase="focus"
-        remaining="${focus_seconds}"
-        notify-send --app-name="Pomodoro" --icon="appointment-soon" \
-          "Break complete" "Your next 25-minute focus session is ready." >/dev/null 2>&1 || true
-      fi
+      remaining=0
       running=0
       end_at=0
+      completed=1
+      sessions=$((sessions + 1))
       save_state
+      notify-send --app-name="Pomodoro" --icon="appointment-soon" \
+        "Pomodoro complete" "Finished: ${task}" >/dev/null 2>&1 || true
     fi
   fi
 }
@@ -126,38 +155,56 @@ format_time() {
 }
 
 print_status() {
-  local duration icon label state_word class_name text tooltip
-  duration="$(duration_for_phase)"
-
-  if [[ "${phase}" == "focus" ]]; then
-    icon="󰔟"
-    label="Focus"
-  else
-    icon="󰅶"
-    label="Break"
+  local icon short_task state_word class_name text tooltip
+  icon="󰔟"
+  short_task="${task}"
+  if (( ${#short_task} > 18 )); then
+    short_task="${short_task:0:17}…"
   fi
 
-  if (( running == 1 )); then
+  if [[ -z "${task}" ]]; then
+    state_word="idle"
+    class_name="idle"
+    text="${icon}"
+    printf -v tooltip 'Pomodoro · No task\nLeft click: add a task and choose the timer'
+  elif (( running == 1 )); then
     state_word="running"
     class_name="active"
-    text="${icon} $(format_time)"
+    text="${icon} $(format_time) · ${short_task}"
+    printf -v tooltip '%s · %s remaining · %s\nLeft: pause · Right: reset · Middle: stop' \
+      "${task}" "$(format_time)" "${state_word}"
+  elif (( completed == 1 )); then
+    state_word="complete"
+    class_name="active"
+    text="${icon} 00:00 · ${short_task}"
+    printf -v tooltip '%s · complete · %s task(s) finished\nLeft: new task · Right: reset · Middle: stop' \
+      "${task}" "${sessions}"
   elif (( remaining < duration )); then
     state_word="paused"
     class_name="paused"
-    text="${icon} $(format_time)"
+    text="${icon} $(format_time) · ${short_task}"
+    printf -v tooltip '%s · %s remaining · %s\nLeft: resume · Right: reset · Middle: stop' \
+      "${task}" "$(format_time)" "${state_word}"
   else
     state_word="ready"
     class_name="idle"
-    text="${icon}"
+    text="${icon} $(format_time) · ${short_task}"
+    printf -v tooltip '%s · %s · %s\nLeft: start · Right: reset · Middle: stop' \
+      "${task}" "$(format_time)" "${state_word}"
   fi
 
-  tooltip="Pomodoro · ${label} $(format_time) · ${state_word} · ${sessions} focus session(s) finished\\nLeft click: start/pause · Right click: reset · Middle click: skip"
-  printf '{"text":"%s","tooltip":"%s","class":"%s"}\n' "${text}" "${tooltip}" "${class_name}"
+  jq -cn \
+    --arg text "${text}" \
+    --arg tooltip "${tooltip}" \
+    --arg class "${class_name}" \
+    '{text: $text, tooltip: $tooltip, class: $class}'
 }
 
 toggle_timer() {
   local now
   now="$(date +%s)"
+
+  [[ -n "${task}" && "${completed}" == "0" ]] || return 0
 
   if (( running == 1 )); then
     remaining=$((end_at - now))
@@ -165,7 +212,7 @@ toggle_timer() {
     running=0
     end_at=0
   else
-    (( remaining <= 0 )) && remaining="$(duration_for_phase)"
+    (( remaining <= 0 )) && remaining="${duration}"
     running=1
     end_at=$((now + remaining))
   fi
@@ -173,43 +220,84 @@ toggle_timer() {
 }
 
 reset_timer() {
-  remaining="$(duration_for_phase)"
+  [[ -n "${task}" ]] || return 0
+
+  remaining="${duration}"
   running=0
   end_at=0
+  completed=0
   save_state
 }
 
-skip_phase() {
-  if [[ "${phase}" == "focus" ]]; then
-    phase="break"
-    remaining="${break_seconds}"
-  else
-    phase="focus"
-    remaining="${focus_seconds}"
-  fi
+stop_timer() {
+  task=""
+  duration="${default_seconds}"
+  remaining="${default_seconds}"
   running=0
   end_at=0
+  completed=0
   save_state
+}
+
+start_timer() {
+  local new_task="${1:-}" minutes="${2:-}"
+
+  new_task="${new_task//$'\n'/ }"
+  new_task="${new_task//$'\r'/ }"
+  if [[ -z "${new_task//[[:space:]]/}" || ! "${minutes}" =~ ^[1-9][0-9]*$ ]] || (( minutes > 1440 )); then
+    printf 'Usage: %s start "task" <minutes: 1-1440>\n' "${0##*/}" >&2
+    return 2
+  fi
+
+  task="${new_task}"
+  duration=$((minutes * 60))
+  remaining="${duration}"
+  running=1
+  completed=0
+  end_at=$(($(date +%s) + duration))
+  save_state
+}
+
+open_setup() {
+  local script_path
+  script_path="$(readlink -f "$0")"
+  flock -u 9
+  exec 9>&-
+  omarchy-launch-floating-terminal-with-presentation "${script_path} setup"
+}
+
+handle_click() {
+  if [[ -z "${task}" ]] || (( completed == 1 )); then
+    open_setup
+  else
+    toggle_timer
+  fi
 }
 
 load_state
 refresh_expired_timer
 
-case "${1:-status}" in
+case "${action}" in
   status)
     print_status
+    ;;
+  click)
+    handle_click
     ;;
   toggle)
     toggle_timer
     ;;
+  start)
+    start_timer "${2:-}" "${3:-}"
+    ;;
   reset)
     reset_timer
     ;;
-  skip)
-    skip_phase
+  stop)
+    stop_timer
     ;;
   *)
-    printf 'Usage: %s {status|toggle|reset|skip}\n' "${0##*/}" >&2
+    printf 'Usage: %s {status|click|setup|toggle|start|reset|stop}\n' "${0##*/}" >&2
     exit 2
     ;;
 esac
