@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "ayush.pomodoro",
+  "name": "Pomodoro",
+  "version": "2.0.0",
+  "author": "Ayush",
+  "description": "Pomodoro timer with a native task and controls popup",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Pomodoro",
+    "description": "Task timer with focus and break presets",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
