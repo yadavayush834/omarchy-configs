@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+# Persistent JSON backend for the ayush.todo Omarchy shell plugin.
+
+set -Eeuo pipefail
+
+state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/omarchy-todo"
+state_file="${state_dir}/tasks.json"
+lock_file="${state_dir}/lock"
+action="${1:-status}"
+
+mkdir -p -- "${state_dir}"
+exec 9>"${lock_file}"
+flock 9
+
+if [[ ! -f "${state_file}" ]] || ! jq -e 'type == "array"' "${state_file}" >/dev/null 2>&1; then
+  printf '[]\n' > "${state_file}"
+fi
+
+save_json() {
+  local temporary
+  temporary="$(mktemp "${state_dir}/tasks.XXXXXX")"
+  jq '.' > "${temporary}"
+  mv -- "${temporary}" "${state_file}"
+}
+
+print_status() {
+  local pending completed text tooltip
+  pending="$(jq '[.[] | select(.done != true)] | length' "${state_file}")"
+  completed="$(jq '[.[] | select(.done == true)] | length' "${state_file}")"
+
+  if (( pending == 0 )); then
+    text="󰄬"
+  else
+    text="󰄬 ${pending}"
+  fi
+
+  printf -v tooltip '%s pending · %s completed\nClick to open your todo list' "${pending}" "${completed}"
+  jq -c --arg text "${text}" --arg tooltip "${tooltip}" \
+    --argjson pending "${pending}" --argjson completed "${completed}" \
+    '{text: $text, tooltip: $tooltip, pending: $pending, completed: $completed, tasks: .}' \
+    "${state_file}"
+}
+
+add_task() {
+  local task_text id
+  task_text="${1:-}"
+  task_text="${task_text//$'\n'/ }"
+  task_text="${task_text//$'\r'/ }"
+  [[ -n "${task_text//[[:space:]]/}" ]] || return 0
+  id="$(date +%s%N)"
+  jq --arg id "${id}" --arg text "${task_text}" \
+    '. + [{id: $id, text: $text, done: false}]' "${state_file}" | save_json
+}
+
+toggle_task() {
+  local id="${1:-}"
+  jq --arg id "${id}" \
+    'map(if .id == $id then .done = (.done != true) else . end)' "${state_file}" | save_json
+}
+
+delete_task() {
+  local id="${1:-}"
+  jq --arg id "${id}" 'map(select(.id != $id))' "${state_file}" | save_json
+}
+
+case "${action}" in
+  status) print_status ;;
+  add) add_task "${2:-}" ;;
+  toggle) toggle_task "${2:-}" ;;
+  delete) delete_task "${2:-}" ;;
+  clear-completed) jq 'map(select(.done != true))' "${state_file}" | save_json ;;
+  *)
+    printf 'Usage: %s {status|add|toggle|delete|clear-completed}\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

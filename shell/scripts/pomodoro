@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+
+# Persistent backend for the ayush.pomodoro Omarchy shell plugin.
+
+set -u
+
+default_seconds=1500
+state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/omarchy-pomodoro"
+state_file="${state_dir}/state"
+lock_file="${state_dir}/lock"
+action="${1:-status}"
+
+mkdir -p "${state_dir}"
+exec 9>"${lock_file}"
+flock 9
+
+mode="pomodoro"
+task=""
+duration="${default_seconds}"
+remaining="${default_seconds}"
+end_at=0
+running=0
+completed=0
+sessions=0
+
+is_uint() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+load_state() {
+  [[ -f "${state_file}" ]] || return 0
+
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      mode)
+        [[ "${value}" =~ ^(pomodoro|short|long|custom)$ ]] && mode="${value}"
+        ;;
+      task)
+        task="${value}"
+        ;;
+      duration)
+        is_uint "${value}" && (( value > 0 )) && duration="${value}"
+        ;;
+      remaining)
+        is_uint "${value}" && remaining="${value}"
+        ;;
+      end_at)
+        is_uint "${value}" && end_at="${value}"
+        ;;
+      running)
+        [[ "${value}" == "0" || "${value}" == "1" ]] && running="${value}"
+        ;;
+      completed)
+        [[ "${value}" == "0" || "${value}" == "1" ]] && completed="${value}"
+        ;;
+      sessions)
+        is_uint "${value}" && sessions="${value}"
+        ;;
+    esac
+  done < "${state_file}"
+}
+
+save_state() {
+  local temporary
+  temporary="$(mktemp "${state_dir}/state.XXXXXX")"
+  {
+    printf 'mode=%s\n' "${mode}"
+    printf 'task=%s\n' "${task}"
+    printf 'duration=%s\n' "${duration}"
+    printf 'remaining=%s\n' "${remaining}"
+    printf 'end_at=%s\n' "${end_at}"
+    printf 'running=%s\n' "${running}"
+    printf 'completed=%s\n' "${completed}"
+    printf 'sessions=%s\n' "${sessions}"
+  } > "${temporary}"
+  mv "${temporary}" "${state_file}"
+}
+
+mode_label() {
+  case "${mode}" in
+    short) printf 'Short Break' ;;
+    long) printf 'Long Break' ;;
+    custom) printf 'Custom Timer' ;;
+    *) printf 'Pomodoro' ;;
+  esac
+}
+
+mode_seconds() {
+  case "$1" in
+    pomodoro) printf '1500' ;;
+    short) printf '300' ;;
+    long) printf '900' ;;
+    *) return 2 ;;
+  esac
+}
+
+refresh_expired_timer() {
+  local now notification_task
+  now="$(date +%s)"
+
+  if (( running == 1 )); then
+    remaining=$((end_at - now))
+    if (( remaining <= 0 )); then
+      remaining=0
+      running=0
+      end_at=0
+      completed=1
+      sessions=$((sessions + 1))
+      save_state
+      notification_task="${task:-$(mode_label)}"
+      notify-send --app-name="Pomodoro" --icon="appointment-soon" \
+        "Timer complete" "Finished: ${notification_task}" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+format_time() {
+  local minutes seconds
+  minutes=$((remaining / 60))
+  seconds=$((remaining % 60))
+  printf '%02d:%02d' "${minutes}" "${seconds}"
+}
+
+print_status() {
+  local icon display_task state_word class_name text tooltip
+  icon="󰔟"
+  display_task="${task:-$(mode_label)}"
+  if (( ${#display_task} > 18 )); then
+    display_task="${display_task:0:17}…"
+  fi
+
+  if (( running == 1 )); then
+    state_word="running"
+    class_name="active"
+    text="${icon} $(format_time) · ${display_task}"
+  elif (( completed == 1 )); then
+    state_word="complete"
+    class_name="active"
+    text="${icon} 00:00 · ${display_task}"
+  elif [[ -z "${task}" && "${mode}" == "pomodoro" && "${remaining}" == "${duration}" ]]; then
+    state_word="ready"
+    class_name="idle"
+    text="${icon}"
+  elif (( remaining < duration )); then
+    state_word="paused"
+    class_name="paused"
+    text="${icon} $(format_time) · ${display_task}"
+  else
+    state_word="ready"
+    class_name="idle"
+    text="${icon} $(format_time) · ${display_task}"
+  fi
+
+  printf -v tooltip '%s · %s · %s\nClick to open Pomodoro controls' \
+    "${task:-$(mode_label)}" "$(format_time)" "${state_word}"
+
+  jq -cn \
+    --arg text "${text}" \
+    --arg tooltip "${tooltip}" \
+    --arg class "${class_name}" \
+    --arg mode "${mode}" \
+    --arg task "${task}" \
+    --argjson duration "${duration}" \
+    --argjson remaining "${remaining}" \
+    --argjson running "${running}" \
+    --argjson completed "${completed}" \
+    --argjson sessions "${sessions}" \
+    '{text: $text, tooltip: $tooltip, class: $class, mode: $mode,
+      task: $task, duration: $duration, remaining: $remaining,
+      running: ($running == 1), completed: ($completed == 1), sessions: $sessions}'
+}
+
+toggle_timer() {
+  local now
+  now="$(date +%s)"
+
+  if (( running == 1 )); then
+    remaining=$((end_at - now))
+    (( remaining < 0 )) && remaining=0
+    running=0
+    end_at=0
+  else
+    if (( completed == 1 || remaining <= 0 )); then
+      remaining="${duration}"
+      completed=0
+    fi
+    running=1
+    end_at=$((now + remaining))
+  fi
+  save_state
+}
+
+reset_timer() {
+  remaining="${duration}"
+  running=0
+  end_at=0
+  completed=0
+  save_state
+}
+
+stop_timer() {
+  task=""
+  remaining="${duration}"
+  running=0
+  end_at=0
+  completed=0
+  save_state
+}
+
+set_task() {
+  local new_task="${1:-}"
+  new_task="${new_task//$'\n'/ }"
+  new_task="${new_task//$'\r'/ }"
+  task="${new_task}"
+  save_state
+}
+
+select_mode() {
+  local new_mode="${1:-}" new_duration
+  new_duration="$(mode_seconds "${new_mode}")" || return 2
+  mode="${new_mode}"
+  duration="${new_duration}"
+  remaining="${duration}"
+  running=0
+  end_at=0
+  completed=0
+  save_state
+}
+
+set_custom_duration() {
+  local minutes="${1:-}"
+  if [[ ! "${minutes}" =~ ^[1-9][0-9]*$ ]] || (( minutes > 1440 )); then
+    printf 'Custom duration must be 1-1440 whole minutes.\n' >&2
+    return 2
+  fi
+
+  mode="custom"
+  duration=$((minutes * 60))
+  remaining="${duration}"
+  running=0
+  end_at=0
+  completed=0
+  save_state
+}
+
+start_custom_task() {
+  local new_task="${1:-}" minutes="${2:-}"
+  set_custom_duration "${minutes}" || return 2
+  set_task "${new_task}"
+  toggle_timer
+}
+
+load_state
+refresh_expired_timer
+
+case "${action}" in
+  status) print_status ;;
+  toggle) toggle_timer ;;
+  reset) reset_timer ;;
+  stop) stop_timer ;;
+  task) set_task "${2:-}" ;;
+  clear-task) set_task "" ;;
+  mode) select_mode "${2:-}" ;;
+  custom) set_custom_duration "${2:-}" ;;
+  start) start_custom_task "${2:-}" "${3:-}" ;;
+  *)
+    printf 'Usage: %s {status|toggle|reset|stop|task|clear-task|mode|custom|start}\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

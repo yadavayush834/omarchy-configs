@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+
+"""List and stop background-only graphical apps in the Omarchy session."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+PROTECTED_UNIT_PARTS = (
+    "omarchy\\x2dhyprland\\x2dmonitor",
+    "xdg\\x2dterminal\\x2dexec",
+    "udiskie",
+)
+
+IGNORED_PROCESSES = {
+    "bash",
+    "bwrap",
+    "chrome_crashpad",
+    "browser_crashpa",
+    "codex",
+    "codex-code-mode",
+    "codex-linux-san",
+    "dconf",
+    "foot",
+    "gtk-launch",
+    "hyprland",
+    "mainthread",
+    "node",
+    "node_repl",
+    "quickshell",
+    "sleep",
+    "socat",
+    "systemd",
+    "uwsm",
+    "xdg-terminal-exec",
+}
+
+FRIENDLY_NAMES = {
+    "brave": "Brave",
+    "brave-browser": "Brave",
+    "chatgpt": "ChatGPT",
+    "chromium": "Chromium",
+    "code": "Visual Studio Code",
+    "discord": "Discord",
+    "firefox": "Firefox",
+    "google-chrome": "Google Chrome",
+    "google-chrome-stable": "Google Chrome",
+    "obsidian": "Obsidian",
+    "signal-desktop": "Signal",
+    "slack": "Slack",
+    "spotify": "Spotify",
+    "telegram-desktop": "Telegram",
+    "telegram": "Telegram",
+    "thunderbird": "Thunderbird",
+    "vesktop": "Vesktop",
+}
+
+
+def run(*args: str) -> str:
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def running_app_scopes() -> list[str]:
+    output = run(
+        "systemctl",
+        "--user",
+        "list-units",
+        "--type=scope",
+        "--state=running",
+        "--no-legend",
+        "--plain",
+    )
+    units = []
+    for line in output.splitlines():
+        unit = line.split(maxsplit=1)[0] if line.strip() else ""
+        if unit.startswith("app-") and not any(part in unit.lower() for part in PROTECTED_UNIT_PARTS):
+            units.append(unit)
+    return units
+
+
+def unit_properties(unit: str) -> dict[str, str]:
+    output = run(
+        "systemctl",
+        "--user",
+        "show",
+        unit,
+        "-p",
+        "ControlGroup",
+        "-p",
+        "MemoryCurrent",
+        "-p",
+        "MainPID",
+    )
+    properties = {}
+    for line in output.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            properties[key] = value
+    return properties
+
+
+def cgroup_pids(control_group: str) -> set[int]:
+    root = Path("/sys/fs/cgroup") / control_group.lstrip("/")
+    pids: set[int] = set()
+    if not root.is_dir():
+        return pids
+    for procs_file in root.rglob("cgroup.procs"):
+        try:
+            pids.update(int(value) for value in procs_file.read_text().split())
+        except (OSError, ValueError):
+            continue
+    return pids
+
+
+def process_info(pid: int) -> tuple[str, str, int] | None:
+    process_root = Path("/proc") / str(pid)
+    try:
+        comm = (process_root / "comm").read_text().strip()
+        executable = (process_root / "exe").resolve().name
+        status = (process_root / "status").read_text()
+    except OSError:
+        return None
+
+    uid_match = re.search(r"^Uid:\s+(\d+)", status, re.MULTILINE)
+    if not uid_match or int(uid_match.group(1)) != os.getuid():
+        return None
+    rss_match = re.search(r"^VmRSS:\s+(\d+)\s+kB", status, re.MULTILINE)
+    rss = int(rss_match.group(1)) * 1024 if rss_match else 0
+    return comm, executable, rss
+
+
+def friendly_process_name(comm: str, executable: str) -> str | None:
+    choices = (executable.lower(), comm.lower())
+    for choice in choices:
+        if choice in FRIENDLY_NAMES:
+            return FRIENDLY_NAMES[choice]
+    if any(choice in IGNORED_PROCESSES for choice in choices):
+        return None
+
+    candidate = executable if executable and executable != "(deleted)" else comm
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,48}", candidate):
+        return None
+    return candidate.replace("-", " ").replace("_", " ").title()
+
+
+def window_pids() -> set[int]:
+    try:
+        clients = json.loads(run("hyprctl", "clients", "-j") or "[]")
+    except json.JSONDecodeError:
+        return set()
+    return {
+        int(client["pid"])
+        for client in clients
+        if client.get("mapped", True) and isinstance(client.get("pid"), int)
+    }
+
+
+def collect_apps(include_visible: bool = False) -> list[dict[str, object]]:
+    open_window_pids = window_pids()
+    grouped: dict[str, dict[str, object]] = {}
+
+    for unit in running_app_scopes():
+        properties = unit_properties(unit)
+        pids = cgroup_pids(properties.get("ControlGroup", ""))
+        if not pids:
+            continue
+
+        name_memory: dict[str, int] = defaultdict(int)
+        for pid in pids:
+            info = process_info(pid)
+            if not info:
+                continue
+            comm, executable, rss = info
+            name = friendly_process_name(comm, executable)
+            if name:
+                name_memory[name] += rss
+
+        if not name_memory:
+            continue
+        name = max(name_memory, key=name_memory.get)
+        key = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        if not key:
+            continue
+
+        try:
+            memory = int(properties.get("MemoryCurrent", "0"))
+        except ValueError:
+            memory = sum(name_memory.values())
+
+        app = grouped.setdefault(
+            key,
+            {"key": key, "name": name, "memory": 0, "units": [], "visible": False},
+        )
+        app["memory"] = int(app["memory"]) + max(0, memory)
+        app["units"].append(unit)
+        app["visible"] = bool(app["visible"]) or bool(pids & open_window_pids)
+
+    apps = [app for app in grouped.values() if include_visible or not app["visible"]]
+    apps.sort(key=lambda app: int(app["memory"]), reverse=True)
+    return apps
+
+
+def human_memory(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.0f} {unit}" if unit in {"B", "KiB"} else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
+
+
+def status() -> None:
+    include_visible = os.environ.get("APP_MONITOR_INCLUDE_VISIBLE") == "1"
+    apps = collect_apps(include_visible=include_visible)
+    for app in apps:
+        app["memoryText"] = human_memory(int(app["memory"]))
+        app.pop("units", None)
+        app.pop("visible", None)
+    total_memory = sum(int(app["memory"]) for app in apps)
+    count = len(apps)
+    text = "󰍹" if count == 0 else f"󰍹 {count}"
+    tooltip = f"{count} background app{'s' if count != 1 else ''} · {human_memory(total_memory)}"
+    print(json.dumps({"text": text, "tooltip": tooltip, "count": count, "memory": total_memory, "apps": apps}))
+
+
+def stop_background_app(key: str) -> int:
+    # Re-scan here so a stale popup can never stop an app that now has a window.
+    matches = [app for app in collect_apps(include_visible=False) if app["key"] == key]
+    if not matches:
+        print("App is no longer running in the background.", file=sys.stderr)
+        return 1
+    result = 0
+    for unit in matches[0]["units"]:
+        completed = subprocess.run(("systemctl", "--user", "stop", str(unit)), check=False)
+        result = result or completed.returncode
+    return result
+
+
+def main() -> int:
+    action = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if action == "status":
+        status()
+        return 0
+    if action == "kill" and len(sys.argv) == 3:
+        return stop_background_app(sys.argv[2])
+    print(f"Usage: {Path(sys.argv[0]).name} {{status|kill <app-key>}}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

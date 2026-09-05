@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "ayush.background-apps",
+  "name": "Background Apps",
+  "version": "1.0.0",
+  "author": "Ayush",
+  "description": "Shows background-only GUI apps, memory use, and a safe kill control",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Background Apps",
+    "description": "Inspect and stop graphical apps that no longer have a window",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
