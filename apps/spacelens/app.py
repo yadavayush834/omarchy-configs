@@ -62,6 +62,7 @@ class SpaceLensWindow(Gtk.ApplicationWindow):
         self.set_size_request(860, 560)
         self.scan_generation = 0
         self.current_root = str(HOME)
+        self.initial_scan_started = False
         manager = WebKit2.UserContentManager()
         manager.register_script_message_handler("spacelens")
         manager.connect("script-message-received::spacelens", self.on_message)
@@ -70,8 +71,18 @@ class SpaceLensWindow(Gtk.ApplicationWindow):
         settings.set_enable_developer_extras(False)
         settings.set_enable_write_console_messages_to_stdout(False)
         self.webview.load_uri((APP_DIR / "index.html").as_uri())
+        self.webview.connect("load-changed", self.on_load_changed)
         self.add(self.webview)
         self.webview.show()
+
+    def on_load_changed(self, _webview, event) -> None:
+        if event == WebKit2.LoadEvent.FINISHED and not self.initial_scan_started:
+            self.initial_scan_started = True
+            GLib.timeout_add(150, self.start_initial_scan)
+
+    def start_initial_scan(self) -> bool:
+        self.start_scan(str(HOME))
+        return False
 
     def send(self, event: str, payload: dict) -> bool:
         message = json.dumps({"event": event, "payload": payload}, ensure_ascii=False)
@@ -90,9 +101,7 @@ class SpaceLensWindow(Gtk.ApplicationWindow):
         except Exception:
             return
         command = data.get("command")
-        if command == "ready":
-            self.start_scan(str(HOME))
-        elif command == "scan-home":
+        if command == "scan-home":
             self.start_scan(str(HOME))
         elif command == "scan-root":
             self.start_scan("/")

@@ -1,4 +1,4 @@
-const colors={Applications:'#b9a0e8',Documents:'#79a8e8',Images:'#e8789a',Videos:'#e6c16b',Audio:'#73d7a7',Archives:'#c8c66d',Code:'#63d4d5',Temporary:'#99a5a6',Other:'#596668',Folders:'#63d4d5'};
+const colors={Applications:'#c49af0',Documents:'#89a8f5',Images:'#ef86ad',Videos:'#ffb454',Audio:'#ed8796',Archives:'#eed49f',Code:'#8aadf4',Temporary:'#a5adcb',Other:'#6e738d',Folders:'#8aadf4'};
 const marks={Applications:'[A]',Documents:'[D]',Images:'[I]',Videos:'[V]',Audio:'[M]',Archives:'[Z]',Code:'[C]',Temporary:'[T]',Other:'[?]',Folders:'[+]'};
 const state={files:[],folders:[],categories:{},capacity:{total:0,used:0,free:0},root:'',view:'all',category:'All',query:'',selected:null,selectedIndex:0,scanning:false};
 const $=id=>document.getElementById(id);
@@ -53,7 +53,19 @@ function renderTable(){
   items.forEach((item,index)=>{
     const row=document.createElement('tr');row.tabIndex=-1;row.className=index===state.selectedIndex?'selected':'';
     const usage=Math.max(item.size/maxSize*100,.5);
-    row.innerHTML=`<td><div class="file-cell"><span class="file-prefix">${marks[item.category]||marks.Other}</span><span class="file-copy"><b class="file-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</b><small class="file-kind">${escapeHtml(item.kind)}</small></span></div></td><td title="${escapeHtml(item.path)}">${escapeHtml(shortPath(item.path))}</td><td>${escapeHtml(item.modified)}</td><td class="right size">${size(item.size)}</td><td><span class="usage"><i class="mini-bar"><i style="width:${usage}%"></i></i></span></td>`;
+    const nameCell=document.createElement('td');
+    const fileCell=document.createElement('div');fileCell.className='file-cell';
+    const prefix=document.createElement('span');prefix.className='file-prefix';prefix.textContent=marks[item.category]||marks.Other;
+    const copy=document.createElement('span');copy.className='file-copy';
+    const name=document.createElement('b');name.className='file-name';name.textContent=item.name;name.title=item.name;
+    const kind=document.createElement('small');kind.className='file-kind';kind.textContent=item.kind||'File';
+    copy.append(name,kind);fileCell.append(prefix,copy);nameCell.append(fileCell);
+    const pathCell=document.createElement('td');pathCell.textContent=shortPath(item.path);pathCell.title=item.path;
+    const modifiedCell=document.createElement('td');modifiedCell.textContent=item.modified;
+    const sizeCell=document.createElement('td');sizeCell.className='right size';sizeCell.textContent=size(item.size);
+    const usageCell=document.createElement('td');const meter=document.createElement('span');meter.className='mini-bar';
+    const fill=document.createElement('span');fill.style.width=`${usage}%`;meter.append(fill);usageCell.append(meter);
+    row.append(nameCell,pathCell,modifiedCell,sizeCell,usageCell);
     row.onclick=()=>selectIndex(index,false);row.ondblclick=()=>bridge({command:'open-path',path:item.path});rows.append(row);
   });
   if(items.length)selectIndex(Math.min(state.selectedIndex,items.length-1),false);else renderDetails();
@@ -71,17 +83,17 @@ function render(){
   renderCategories();renderStorage();renderTable();
   document.querySelectorAll('[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===state.view));
 }
-function setScanning(value){state.scanning=value;$('scanProgress').classList.toggle('visible',value);$('scanStatus').classList.toggle('working',value)}
+function setScanning(value){state.scanning=value;$('scanProgress').classList.toggle('visible',value)}
 
 window.SpaceLens={receive(message){
   const {event,payload}=message;
   if(event==='scan-start'){
-    state.root=payload.root;state.selected=null;state.selectedIndex=0;setScanning(true);$('scanStatus').lastElementChild.textContent=`INDEXING ${shortPath(payload.root).toUpperCase()}`;$('progressTitle').textContent='INDEXING FILESYSTEM';$('progressDetail').textContent=shortPath(payload.root);renderStorage();
+    state.root=payload.root;state.selected=null;state.selectedIndex=0;setScanning(true);$('progressTitle').textContent='INDEXING FILESYSTEM';$('progressDetail').textContent=shortPath(payload.root);renderStorage();
   }else if(event==='scan-progress'){
     $('progressDetail').textContent=`${payload.files.toLocaleString()} FILES // ${size(payload.bytes)} // ${shortPath(payload.current)}`;$('fileCount').textContent=payload.files.toLocaleString();$('folderCount').textContent=payload.folders.toLocaleString();
   }else if(event==='scan-complete'){
-    Object.assign(state,payload);state.selectedIndex=0;state.selected=payload.files[0]||payload.folders[0]||null;setScanning(false);$('scanStatus').lastElementChild.textContent=`READY // ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;$('fileCount').textContent=payload.fileCount.toLocaleString();$('folderCount').textContent=payload.folderCount.toLocaleString();$('reclaimSize').textContent=size(payload.categories.Temporary||0);$('errorCount').textContent=payload.errors.toLocaleString();render();
-  }else if(event==='cancelled'){setScanning(false);$('scanStatus').lastElementChild.textContent='SCAN ABORTED';toast('SCAN ABORTED')}
+    Object.assign(state,payload);state.selectedIndex=0;state.selected=payload.files[0]||payload.folders[0]||null;setScanning(false);$('fileCount').textContent=payload.fileCount.toLocaleString();$('folderCount').textContent=payload.folderCount.toLocaleString();$('reclaimSize').textContent=size(payload.categories.Temporary||0);$('errorCount').textContent=payload.errors.toLocaleString();render();
+  }else if(event==='cancelled'){setScanning(false);toast('SCAN ABORTED')}
   else if(event==='scan-error'){setScanning(false);toast(payload.message.toUpperCase())}
 }};
 
@@ -99,4 +111,3 @@ document.addEventListener('keydown',event=>{
   else if(!input&&event.key==='Enter'&&state.selected)bridge({command:'open-path',path:state.selected.path})
   else if(event.key==='Escape'){if(state.scanning)bridge('cancel-scan');else{state.query='';$('searchInput').value='';$('searchInput').blur();renderTable()}}
 });
-bridge('ready');
