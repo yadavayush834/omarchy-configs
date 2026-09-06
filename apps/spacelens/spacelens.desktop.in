@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SpaceLens Disk Usage
+GenericName=Disk Usage Analyzer
+Comment=See exactly what is consuming disk space
+Exec=@APP_DIR@/app.py
+Icon=spacelens
+Terminal=false
+Categories=System;FileTools;
+Keywords=disk;storage;space;files;folders;cleanup;usage;
+StartupNotify=true
+StartupWMClass=com.ayush.SpaceLens
