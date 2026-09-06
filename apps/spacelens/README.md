@@ -10,6 +10,7 @@ videos, audio, archives, code, temporary files, and other data.
 - Optional full-system or custom-folder scans
 - Largest-file and largest-folder views
 - Category filters, search, file details, and file-manager integration
+- Terminal-inspired interface with `j`/`k`, arrow-key, `/`, `r`, `s`, and `o` shortcuts
 - Runs entirely on-device; no server and no uploads
 
 ## Install

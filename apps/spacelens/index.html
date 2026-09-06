@@ -1,21 +1,83 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SpaceLens</title><link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SpaceLens</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
-  <header class="topbar"><div class="brand"><span class="brand-icon">◫</span><span>SpaceLens</span></div><div id="scanStatus" class="scan-status"><span class="status-dot"></span><span>Preparing scanner…</span></div><div class="top-actions"><button class="button quiet" data-command="scan-root" title="Scan the complete system">Scan system</button><button class="button primary" data-command="choose-folder"><span>⌕</span> Scan folder</button></div></header>
-  <aside class="sidebar"><div><p class="nav-label">OVERVIEW</p><button class="nav-item active" data-view="all"><span class="nav-icon">▦</span>Storage overview</button><button class="nav-item" data-view="folders"><span class="nav-icon">▰</span>Largest folders</button><p class="nav-label">BROWSE BY TYPE</p><div id="categoryNav"></div></div><div class="privacy"><span>✓</span><div><strong>Runs locally</strong><small>Nothing leaves this computer.</small></div></div></aside>
-  <main class="main">
-    <section class="summary"><div class="summary-copy"><div id="rootPath" class="drive-label">⌁ &nbsp; Home folder</div><h1><strong id="usedSize">—</strong> used <small>of <span id="totalSize">—</span></small></h1><div id="storageBar" class="storage-bar"><i class="bar-empty"></i></div><div class="storage-meta"><span id="percentFull">Scanning…</span><span id="freeSize">— available</span></div></div><div class="orbit" aria-hidden="true"><div class="ring outer"></div><div class="ring inner"></div><div class="orbit-core"><strong id="orbitValue">—</strong><small>available</small></div></div></section>
-    <section id="scanProgress" class="progress-card visible"><div class="spinner"></div><div><strong id="progressTitle">Scanning your home folder</strong><p id="progressDetail">Looking for files and folders…</p></div><button class="button quiet cancel" data-command="cancel-scan">Cancel</button></section>
-    <section class="stats-grid"><article><span class="stat-icon purple">▧</span><div><strong id="fileCount">—</strong><small>Files scanned</small></div></article><article><span class="stat-icon blue">▰</span><div><strong id="folderCount">—</strong><small>Folders scanned</small></div></article><article><span class="stat-icon green">↯</span><div><strong id="reclaimSize">—</strong><small>Temporary files</small></div></article><article><span class="stat-icon orange">!</span><div><strong id="errorCount">—</strong><small>Unavailable items</small></div></article></section>
-    <section class="files-card"><div class="card-head"><div><h2 id="viewTitle">Largest files</h2><p id="itemSummary">Results appear while your disk is scanned</p></div><label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Search files and paths"></label></div><div class="table-scroll"><table><thead><tr><th>Name</th><th>Location</th><th>Modified</th><th class="number">Size</th><th></th></tr></thead><tbody id="fileRows"></tbody></table><div id="emptyState" class="empty"><span>⌕</span><strong>No matching items</strong><small>Try another search or category.</small></div></div></section>
-  </main>
-  <aside id="detailPanel" class="details"><div class="empty-detail"><span>▧</span><strong>Select an item</strong><small>Choose a file or folder to inspect.</small></div></aside>
-</div>
-<div id="toast" class="toast"></div><script src="app.js"></script>
+  <div class="terminal-app">
+    <header class="term-head">
+      <div class="wordmark"><b>SPACELENS</b><span>// DISK ANALYZER</span></div>
+      <div id="scanStatus" class="scan-status"><i></i><span>INITIALIZING</span></div>
+      <div class="head-actions">
+        <button data-command="scan-root"><kbd>S</kbd> SYSTEM</button>
+        <button data-command="choose-folder"><kbd>O</kbd> OPEN PATH</button>
+      </div>
+    </header>
+
+    <aside class="tree-panel">
+      <div class="panel-title"><span>┌─ SOURCES</span><span>─┐</span></div>
+      <nav>
+        <button class="tree-row active" data-view="all"><span>›</span><b>ALL FILES</b><em>largest</em></button>
+        <button class="tree-row" data-view="folders"><span>›</span><b>FOLDERS</b><em>totals</em></button>
+      </nav>
+      <div class="panel-title category-title"><span>├─ TYPES</span><span>─┤</span></div>
+      <nav id="categoryNav"></nav>
+      <div class="tree-fill"></div>
+      <div class="local-note"><span>[LOCAL]</span><p>READ-ONLY SCAN<br>NO NETWORK ACCESS</p></div>
+    </aside>
+
+    <main class="work-panel">
+      <section class="path-line"><span>PATH</span><strong id="rootPath">~</strong><button data-command="scan-home">HOME</button></section>
+
+      <section class="disk-readout">
+        <div class="disk-numbers"><div><span>DISK USED</span><strong id="usedSize">--</strong></div><div><span>CAPACITY</span><strong id="totalSize">--</strong></div><div><span>AVAILABLE</span><strong id="freeSize">--</strong></div><div><span>UTILIZATION</span><strong id="percentFull">--%</strong></div></div>
+        <div class="meter"><span>0%</span><div id="storageBar" class="storage-bar"><i></i></div><span>100%</span></div>
+        <div id="categoryLegend" class="legend"></div>
+      </section>
+
+      <section id="scanProgress" class="scan-line visible">
+        <span class="scan-glyph">⠋</span>
+        <strong id="progressTitle">INDEXING HOME</strong>
+        <span id="progressDetail">waiting for scanner…</span>
+        <button data-command="cancel-scan">[ESC] CANCEL</button>
+      </section>
+
+      <section class="counter-line">
+        <span>FILES <b id="fileCount">0</b></span>
+        <span>DIRS <b id="folderCount">0</b></span>
+        <span>TEMP <b id="reclaimSize">0 B</b></span>
+        <span>DENIED <b id="errorCount">0</b></span>
+        <span class="sort-label">SORT: <b>SIZE ↓</b></span>
+      </section>
+
+      <section class="list-panel">
+        <div class="list-head">
+          <div><span id="viewTitle">ALL FILES</span><small id="itemSummary">INDEX PENDING</small></div>
+          <label class="search"><span>/</span><input id="searchInput" type="search" autocomplete="off" placeholder="filter path…"></label>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>NAME</th><th>PATH</th><th>MODIFIED</th><th class="right">BYTES</th><th>USAGE</th></tr></thead>
+            <tbody id="fileRows"></tbody>
+          </table>
+          <div id="emptyState" class="empty"><b>NO MATCHING ENTRIES</b><span>clear the filter or select another type</span></div>
+        </div>
+      </section>
+    </main>
+
+    <aside id="detailPanel" class="inspect-panel">
+      <div class="panel-title"><span>┌─ INSPECTOR</span><span>─┐</span></div>
+      <div class="empty-detail"><span>[ -- ]</span><b>NO ENTRY SELECTED</b><small>use ↑/↓ or j/k</small></div>
+    </aside>
+
+    <footer class="keybar">
+      <span><kbd>↑↓</kbd> NAVIGATE</span><span><kbd>ENTER</kbd> INSPECT</span><span><kbd>/</kbd> FILTER</span><span><kbd>R</kbd> RESCAN</span><span><kbd>O</kbd> OPEN PATH</span><span><kbd>ESC</kbd> CLEAR / CANCEL</span><i>SPACE LENS v0.2.0</i>
+    </footer>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
 </body>
 </html>
